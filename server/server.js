@@ -4,9 +4,14 @@ import cors from "cors"
 import path from "path"
 import fs from "fs"
 import { fileURLToPath } from "url"
+import { spawn } from "child_process"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// Ruta al intérprete de Python y scripts
+const PYTHON = process.env.PYTHON || "python3"
+const SCRIPTS_DIR = path.join(__dirname, "scripts")
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -33,42 +38,69 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage })
 
-// Función helper para respuestas con manejo de errores
-const safeResponse = (res, operation, simulatedData) => {
-  try {
-    // Aquí iría la lógica real del modelo/procesamiento
-    // Por ahora simulamos un posible error aleatorio
-    if (Math.random() < 0.3) {
-      // 30% probabilidad de "error"
-      throw new Error("Simulated processing error")
+// Ejecuta un script de Python y devuelve la salida JSON
+const runPython = (script, args = [], inputData) => {
+  return new Promise((resolve, reject) => {
+    const child = spawn(PYTHON, [path.join(SCRIPTS_DIR, script), ...args])
+    let output = ""
+    let error = ""
+
+    if (inputData) {
+      child.stdin.write(inputData)
+      child.stdin.end()
     }
 
-    res.json({
-      error: false,
-      message: `${operation} completed successfully`,
-      simulated: false,
-      data: simulatedData,
+    child.stdout.on("data", (data) => {
+      output += data.toString()
     })
-  } catch (error) {
-    console.error(`Error in ${operation}:`, error.message)
-    res.json({
-      error: true,
-      message: `No se pudo completar ${operation.toLowerCase()}. Continuando con datos simulados para mantener el flujo de trabajo.`,
-      simulated: true,
-      data: simulatedData,
+
+    child.stderr.on("data", (data) => {
+      error += data.toString()
     })
-  }
+
+    child.on("close", () => {
+      if (error) {
+        console.error(script, error)
+      }
+      try {
+        resolve(JSON.parse(output))
+      } catch (e) {
+        reject(e)
+      }
+    })
+  })
+}
+
+// Utilidad simple para respuestas de endpoints simulados
+const safeResponse = (res, message, data) => {
+  res.json({ error: false, message, simulated: true, data })
 }
 
 // Endpoint para segmentación automática
-app.post("/api/segment", upload.single("image"), (req, res) => {
-  const simulatedMask = {
-    maskUrl: "/api/placeholder-mask",
-    confidence: 0.87,
-    processingTime: "2.3s",
+app.post("/api/segment", upload.single("image"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: true, message: "Imagen no enviada" })
   }
 
-  safeResponse(res, "Segmentación automática", simulatedMask)
+  const maskName = `mask-${Date.now()}.png`
+  const maskPath = path.join("uploads", maskName)
+
+  try {
+    const result = await runPython("segment.py", [req.file.path, maskPath])
+    res.json({
+      error: false,
+      message: "Segmentación automática completada",
+      simulated: false,
+      data: { maskUrl: `/${maskPath}`, confidence: result.confidence || 0.9 },
+    })
+  } catch (e) {
+    console.error("segment", e)
+    res.json({
+      error: true,
+      message: "Error en la segmentación automática",
+      simulated: false,
+    })
+  }
 })
 
 // Endpoint para clasificación
@@ -78,17 +110,51 @@ app.post(
     { name: "image", maxCount: 1 },
     { name: "mask", maxCount: 1 },
   ]),
-  (req, res) => {
-    const simulatedPrediction = {
-      classification: Math.random() > 0.5 ? "normal" : "pathological",
-      confidence: (Math.random() * 0.3 + 0.7).toFixed(3), // 70-100%
-      processingTime: "1.8s",
-      modelUsed: req.body.model || "MobileNetV2_default",
+  async (req, res) => {
+    const image = req.files?.image?.[0]
+    const mask = req.files?.mask?.[0]
+
+    if (!image || !mask) {
+      return res.status(400).json({ error: true, message: "Faltan archivos" })
     }
 
-    safeResponse(res, "Clasificación", simulatedPrediction)
+    try {
+      const result = await runPython("classify.py", [image.path, mask.path])
+      res.json({
+        error: false,
+        message: "Clasificación completada",
+        simulated: false,
+        data: result,
+      })
+    } catch (e) {
+      console.error("predict", e)
+      res.json({ error: true, message: "Error en la clasificación", simulated: false })
+    }
   },
 )
+
+// Procesamiento de archivos .mat
+app.post("/api/process-mat", upload.single("mat"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: true, message: "Archivo .mat requerido" })
+  }
+
+  const maskName = `mat-mask-${Date.now()}.png`
+  const maskPath = path.join("uploads", maskName)
+
+  try {
+    const result = await runPython("process_mat.py", [req.file.path, maskPath])
+    res.json({
+      error: false,
+      message: "Archivo .mat procesado",
+      simulated: false,
+      data: { maskUrl: `/${maskPath}`, variables: result.variables || [] },
+    })
+  } catch (e) {
+    console.error("process-mat", e)
+    res.json({ error: true, message: "Error al procesar archivo .mat", simulated: false })
+  }
+})
 
 // Endpoint para Grad-CAM
 app.post(
@@ -109,14 +175,26 @@ app.post(
 )
 
 // Endpoint para generar PDF
-app.post("/api/generate-pdf", (req, res) => {
-  const simulatedPDF = {
-    pdfUrl: "/api/placeholder-pdf",
-    filename: `renal_analysis_${Date.now()}.pdf`,
-    size: "2.4 MB",
-  }
+app.post("/api/generate-pdf", async (req, res) => {
+  const pdfName = `report-${Date.now()}.pdf`
+  const pdfPath = path.join("uploads", pdfName)
 
-  safeResponse(res, "Generación de informe PDF", simulatedPDF)
+  try {
+    const result = await runPython(
+      "generate_pdf.py",
+      [pdfPath],
+      JSON.stringify(req.body)
+    )
+    res.json({
+      error: false,
+      message: "PDF generado",
+      simulated: false,
+      data: { pdfUrl: `/${result.pdf_path || pdfPath}` },
+    })
+  } catch (e) {
+    console.error("pdf", e)
+    res.json({ error: true, message: "Error al generar PDF", simulated: false })
+  }
 })
 
 // Endpoints para placeholders
