@@ -20,7 +20,6 @@ interface FileUploadProps {
 export function FileUpload({ onNext, onDataUpdate, onError, analysisData }: FileUploadProps) {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [maskFile, setMaskFile] = useState<File | null>(null)
-  const [maskOption, setMaskOption] = useState<"auto" | "manual">("auto")
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
 
@@ -85,71 +84,25 @@ export function FileUpload({ onNext, onDataUpdate, onError, analysisData }: File
     multiple: false,
   })
 
-  const handleAutoSegmentation = async () => {
-    if (!imageFile) {
-      onError("No hay imagen para procesar. Usando segmentación simulada.")
-      onDataUpdate({
-        image: "/placeholder.svg?height=400&width=400&text=Imagen+Simulada",
-        mask: "/placeholder.svg?height=400&width=400&text=Máscara+Simulada",
-        maskGenerated: true,
-      })
-      return
-    }
-
-    setIsProcessing(true)
-
-    try {
-      const formData = new FormData()
-      formData.append("image", imageFile)
-
-      const response = await fetch("/api/segment", {
-        method: "POST",
-        body: formData,
-      })
-
-      const result = await response.json()
-
-      if (result.error) {
-        onError(result.message)
-      }
-
-      onDataUpdate({
-        image: imageFile,
-        mask: result.data.maskUrl,
-        maskGenerated: true,
-      })
-    } catch (error) {
-      onError("Error de conexión al generar la máscara. Usando máscara simulada.")
-      onDataUpdate({
-        image: imageFile,
-        mask: "/placeholder.svg?height=400&width=400&text=Máscara+Simulada",
-        maskGenerated: true,
-      })
-    } finally {
-      setIsProcessing(false)
-    }
-  }
 
   const handleNext = async () => {
     if (!imageFile && !imagePreview) {
-      onError("Se requiere una imagen para continuar. Usando imagen simulada.")
-      setImagePreview("/placeholder.svg?height=300&width=400&text=Imagen+Simulada")
+      onError("Se requiere una imagen para continuar.");
+      return;
     }
 
-    if (maskOption === "auto") {
-      await handleAutoSegmentation()
-    } else if (maskFile) {
-      onDataUpdate({
-        image: imageFile,
-        mask: maskFile,
-        maskGenerated: false,
-      })
-    } else {
-      onError("No se proporcionó máscara manual. Generando máscara automática.")
-      await handleAutoSegmentation()
+    if (!maskFile) {
+      onError("Debe proporcionar una máscara en formato .mat");
+      return;
     }
 
-    onNext()
+    onDataUpdate({
+      image: imageFile,
+      mask: maskFile,
+      maskGenerated: false,
+    });
+
+    onNext();
   }
 
   return (
@@ -216,56 +169,37 @@ export function FileUpload({ onNext, onDataUpdate, onError, analysisData }: File
         </CardContent>
       </Card>
 
-      {/* Mask Option */}
+      {/* Máscara */}
       <Card>
         <CardHeader>
-          <CardTitle>Configuración de Máscara</CardTitle>
+          <CardTitle>Subir Máscara (.mat)</CardTitle>
         </CardHeader>
         <CardContent>
-          <RadioGroup value={maskOption} onValueChange={(value: "auto" | "manual") => setMaskOption(value)}>
-            <div className="flex items-center space-x-2">
-              <RadioGroupItem value="auto" id="auto" />
-              <Label htmlFor="auto" className="font-medium">
-                Generar máscara automáticamente (Recomendado)
-              </Label>
-            </div>
-            <div className="flex items-center space-x-2">
-              <RadioGroupItem value="manual" id="manual" />
-              <Label htmlFor="manual" className="font-medium">
-                Subir máscara manualmente (.mat)
-              </Label>
-            </div>
-          </RadioGroup>
-
-          {maskOption === "manual" && (
-            <div className="mt-4">
-              <div
-                {...getMaskRootProps()}
-                className={`
-                  border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors
-                  ${
-                    isMaskDragActive
-                      ? "border-primary bg-primary/5"
-                      : "border-gray-300 hover:border-primary hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800"
-                  }
-                `}
-              >
-                <input {...getMaskInputProps()} />
-                <Upload className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-                {maskFile ? (
-                  <div className="space-y-1">
-                    <CheckCircle className="w-6 h-6 mx-auto text-green-600" />
-                    <p className="text-sm font-medium text-green-600">{maskFile.name}</p>
-                  </div>
-                ) : (
-                  <div>
-                    <p className="font-medium text-gray-700 dark:text-gray-300">Subir archivo .mat</p>
-                    <p className="text-xs text-gray-500">Archivo de máscara en formato MATLAB</p>
-                  </div>
-                )}
+          <div
+            {...getMaskRootProps()}
+            className={`
+              border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors
+              ${
+                isMaskDragActive
+                  ? "border-primary bg-primary/5"
+                  : "border-gray-300 hover:border-primary hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800"
+              }
+            `}
+          >
+            <input {...getMaskInputProps()} />
+            <Upload className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+            {maskFile ? (
+              <div className="space-y-1">
+                <CheckCircle className="w-6 h-6 mx-auto text-green-600" />
+                <p className="text-sm font-medium text-green-600">{maskFile.name}</p>
               </div>
-            </div>
-          )}
+            ) : (
+              <div>
+                <p className="font-medium text-gray-700 dark:text-gray-300">Subir archivo .mat</p>
+                <p className="text-xs text-gray-500">Archivo de máscara en formato MATLAB</p>
+              </div>
+            )}
+          </div>
         </CardContent>
       </Card>
 
